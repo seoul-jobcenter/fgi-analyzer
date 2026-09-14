@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 from datetime import datetime
 
 st.set_page_config(page_title="FGI 질적연구 AI 코딩 분석", page_icon="🔍", layout="wide")
@@ -32,7 +32,16 @@ if not api_key:
     st.info("👈 왼쪽에 Google API 키를 입력하세요.")
     st.stop()
 
-genai.configure(api_key=api_key)
+client = genai.Client(api_key=api_key)
+
+def run(prompt):
+    response = client.models.generate_content_stream(
+        model="gemini-2.0-flash",
+        contents=prompt
+    )
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text
 
 st.subheader("📄 전사본 입력")
 st.caption("참여자명은 P1, P2 등으로 익명화해주세요.")
@@ -43,12 +52,6 @@ if not transcript or len(transcript.strip()) < 20:
     st.stop()
 
 st.success(f"✅ 전사본 입력 완료: {len(transcript.strip()):,}자")
-
-def run(prompt):
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    for chunk in model.generate_content(prompt, stream=True):
-        if chunk.text:
-            yield chunk.text
 
 st.divider()
 st.subheader("1️⃣ 개방 코딩")
@@ -105,7 +108,7 @@ if st.session_state.stage3:
     st.subheader("4️⃣ 원자료 검토")
     if st.session_state.stage4 is None:
         if st.button("▶ 4단계 분석 시작", type="primary", use_container_width=True):
-            p = "당신은 질적 코딩을 돕는 보조자다. 이 결과는 후보안이며 최종 결정은 연구자가 한다.\n\n주제 후보를 전사본과 대조하여 검토하라.\n\n[규칙]\n- 내적 일관성(반복 패턴 대표 여부) 확인\n- 외적 구별성(다른 주제와 구별 여부) 확인\n- 미코딩 발화 중 관련 내용 찾아 표시\n- 패턴 혼재 시 분리 제안, 겹치면 통합 제안, 빈약하면 폐기 제안\n- 자료에 없는 해석 금지\n\n[출력형식]\n| 주제명 | 검토 의견(유지/분리/통합/폐기) | 판단 근거(원문 인용) | 미비점 |\n\n[주제 후보]\n" + st.session_state.stage3 + "\n\n[전사본]\n" + transcript.strip()
+            p = "당신은 질적 코딩을 돕는 보조자다. 이 결과는 후보안이며 최종 결정은 연구자가 한다.\n\n주제 후보를 전사본과 대조하여 검토하라.\n\n[규칙]\n- 내적 일관성 확인\n- 외적 구별성 확인\n- 미코딩 발화 중 관련 내용 찾아 표시\n- 패턴 혼재 시 분리, 겹치면 통합, 빈약하면 폐기 제안\n- 자료에 없는 해석 금지\n\n[출력형식]\n| 주제명 | 검토 의견(유지/분리/통합/폐기) | 판단 근거(원문 인용) | 미비점 |\n\n[주제 후보]\n" + st.session_state.stage3 + "\n\n[전사본]\n" + transcript.strip()
             with st.spinner("분석 중..."):
                 result = st.write_stream(run(p))
             st.session_state.stage4 = result
@@ -122,7 +125,7 @@ if st.session_state.stage4:
     st.subheader("5️⃣ 최종 보고서 초안")
     if st.session_state.stage5 is None:
         if st.button("▶ 5단계 분석 시작", type="primary", use_container_width=True):
-            p = "당신은 질적 코딩을 돕는 보조자다. 유지 판정된 주제에 한해 설명문을 작성한다.\n\n유지 판정된 주제로 보고서 초안을 작성하라.\n\n[구조]\n① 자료 근거 - 어떤 코드와 인용문이 이 주제를 지지하는가\n② 해석 - 이 인용문들이 보여주는 패턴이 무엇인가\n③ 의미 - 이 패턴이 연구 질문에 대해 무엇을 말해주는가\n\n[출력형식]\n| 주제명 | 자료 근거(코드·인용문) | 해석 | 의미 |\n\n[4단계 결과]\n" + st.session_state.stage4
+            p = "당신은 질적 코딩을 돕는 보조자다. 유지 판정된 주제에 한해 설명문을 작성한다.\n\n유지 판정된 주제로 보고서 초안을 작성하라.\n\n[구조]\n① 자료 근거\n② 해석\n③ 의미\n\n[출력형식]\n| 주제명 | 자료 근거(코드·인용문) | 해석 | 의미 |\n\n[4단계 결과]\n" + st.session_state.stage4
             with st.spinner("분석 중..."):
                 result = st.write_stream(run(p))
             st.session_state.stage5 = result
