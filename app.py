@@ -53,7 +53,7 @@ if not transcript or len(transcript.strip()) < 20:
 st.success(f"✅ 전사본 입력 완료: {len(transcript.strip()):,}자")
 
 def stream_stage(system_text, user_text):
-    model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system_text)
+    model = genai.GenerativeModel("gemini-2.0-flash-exp", system_instruction=system_text)
     response = model.generate_content(user_text, stream=True)
     for chunk in response:
         if chunk.text:
