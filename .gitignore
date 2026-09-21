@@ -1,0 +1,15 @@
+# 비밀값 — 절대 올리지 않는다
+.streamlit/secrets.toml
+.env
+*.key
+*.pem
+
+# 파이썬 가상환경 (482MB) · 캐시
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# 손으로 뜬 백업본
+*.bak
+*.bak.*

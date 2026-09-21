@@ -1,35 +1,64 @@
+import os
 import streamlit as st
 import anthropic
 from datetime import datetime
 
-st.set_page_config(page_title="FGI 질적연구 AI 코딩 분석", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="FGI 질적연구 AI 코딩 분석", page_icon="🔍", layout="wide", initial_sidebar_state="collapsed")
 
-with st.sidebar:
-    st.title("🔍 FGI 분석 프로그램")
-    st.caption("서울특별시장애인일자리센터")
-    st.divider()
-    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
-    if api_key:
-        st.success("✅ API 연결됨")
-    else:
-        api_key = st.text_input("🔑 Claude API 키", type="password", placeholder="sk-ant-...")
-    st.divider()
-    st.warning("⚠️ AI 결과는 후보안입니다.\n\n최종 확정은 연구자가 결정합니다.")
-    st.divider()
-    if st.button("🔄 처음부터 다시 시작", use_container_width=True):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.rerun()
+st.markdown("""
+<style>
+.block-container { padding-top: 2.4rem; }
+.fgi-head { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 0.75rem; row-gap: 0.15rem; }
+.fgi-head h1 { font-size: 1.95rem; font-weight: 700; margin: 0; padding: 0; line-height: 1.35; white-space: nowrap; }
+.fgi-sub { font-size: 0.875rem; line-height: 1.6; opacity: 0.62; }
+.fgi-status { display: flex; align-items: center; justify-content: center; height: 2.5rem; margin: 0; font-size: 0.875rem; font-weight: 600; border-radius: 0.5rem; white-space: nowrap; }
+[data-testid="stMarkdownContainer"]:has(> .fgi-status) { margin-bottom: 0 !important; }
+.fgi-on { background: rgba(33,195,84,0.14); color: #1a7f37; border: 1px solid rgba(33,195,84,0.35); }
+.fgi-off { background: rgba(255,170,0,0.16); color: #96590d; border: 1px solid rgba(255,170,0,0.40); }
+</style>
+""", unsafe_allow_html=True)
+
+api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+if not api_key:
+    try:
+        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    except Exception:
+        api_key = ""
+if not api_key:
+    api_key = st.session_state.get("api_key_input", "")
 
 for s in ["stage1","stage2","stage3","stage4","stage5"]:
     if s not in st.session_state:
         st.session_state[s] = None
 
-st.title("FGI 질적연구 AI 코딩 분석")
-st.caption("Braun & Clarke 분석법 | 2~5단계 AI 보조")
+head_left, head_right = st.columns([2.8, 1], vertical_alignment="center")
+with head_left:
+    st.markdown(
+        '<div class="fgi-head">'
+        '<h1>🔍 FGI 질적연구 AI 코딩 분석</h1>'
+        '<span class="fgi-sub">서울특별시장애인일자리센터 | Braun &amp; Clarke 분석법 | 2~5단계 AI 보조'
+        ' / 제작자 : 최진명(choi0127@jobcenter.or.kr)</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+with head_right:
+    status_col, reset_col = st.columns([1, 1.2], vertical_alignment="center")
+    with status_col:
+        if api_key:
+            st.markdown('<div class="fgi-status fgi-on">✅ API 연결됨</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="fgi-status fgi-off">⚠️ API 미연결</div>', unsafe_allow_html=True)
+    with reset_col:
+        if st.button("🔄 처음부터 다시 시작", use_container_width=True):
+            for k in list(st.session_state.keys()):
+                del st.session_state[k]
+            st.rerun()
+
+st.divider()
 
 if not api_key:
-    st.info("👈 왼쪽에 Claude API 키를 입력하세요.")
+    st.text_input("🔑 Claude API 키", type="password", placeholder="sk-ant-...", key="api_key_input")
+    st.info("Claude API 키를 입력하면 분석을 시작할 수 있습니다.")
     st.stop()
 
 client = anthropic.Anthropic(api_key=api_key)
