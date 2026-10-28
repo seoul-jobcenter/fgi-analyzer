@@ -4,6 +4,8 @@ import streamlit as st
 import anthropic
 from datetime import datetime
 from extract import ACCEPT, extract_text
+from stt import AUDIO_TYPES, clock, transcribe
+import mask
 
 st.set_page_config(page_title="FGI 질적연구 AI 코딩 분석", page_icon="🔍", layout="wide", initial_sidebar_state="collapsed")
 
@@ -137,6 +139,101 @@ def run(prompt):
         for text in stream.text_stream:
             yield text
 
+@st.cache_resource(show_spinner="개인정보 찾기 모델을 불러오는 중…")
+def pii_detector():
+    return mask.load_detector()
+
+def send_transcript(text, then=None):
+    # 대화 상자에서 고른 글을 전사본 칸으로 넘긴다(칸은 다음 실행에서 그리기 전에 채운다)
+    st.session_state.pending_transcript = text
+    if then == "run":
+        st.session_state.autorun = True
+    elif then == "mask":
+        st.session_state.open_mask = True
+    st.rerun()
+
+@st.dialog("🎙️ 음성 파일을 글로 바꾸기", width="large")
+def stt_dialog():
+    st.caption("녹음 파일을 끌어다 놓거나 'Browse files'로 고르세요. 음성은 이 서버 안에서만 글로 바꾸고 외부로 보내지 않으며, 끝나면 지웁니다. "
+               "1시간 녹음에 15분쯤 걸리니 그동안 창을 닫지 마세요.")
+    f = st.file_uploader("음성 파일", type=AUDIO_TYPES, key="stt_upload", label_visibility="collapsed")
+    res = st.session_state.get("stt_result")
+    if f is not None and (res is None or res["name"] != f.name):
+        btn_area = st.empty()
+        if btn_area.button("▶ 글로 바꾸기", type="primary", use_container_width=True):
+            btn_area.empty()
+            bar = st.progress(0.0, text="준비 중…")
+            try:
+                text, dur = transcribe(f.name, f.getvalue(), lambda r, m: bar.progress(r, text=m))
+            except Exception as e:
+                bar.empty()
+                st.error(str(e))
+                return
+            bar.empty()
+            res = st.session_state.stt_result = {"name": f.name, "text": text, "dur": dur}
+    if res and f is not None and res["name"] == f.name:
+        st.success(f"{res['name']} — {clock(res['dur'])} 분량, {len(res['text']):,}자")
+        st.text_area("변환 결과 미리 보기", res["text"], height=200, disabled=True)
+        st.caption("말한 사람은 구분되지 않습니다. 개인정보 가리기에서 이름을 P1, P2…로 바꾸고, 전사본 칸에서 화자를 붙여 주세요.")
+        c1, c2, c3 = st.columns(3)
+        if c1.button("다음: 개인정보 가리기", type="primary", use_container_width=True):
+            send_transcript(res["text"], "mask")
+        if c2.button("바로 1단계 분석", use_container_width=True):
+            send_transcript(res["text"], "run")
+        if c3.button("전사본 칸에만 넣기", use_container_width=True):
+            send_transcript(res["text"])
+
+@st.dialog("🕶️ 개인정보 가리기", width="large")
+def mask_dialog():
+    text = st.session_state.get("transcript") or ""
+    if len(text.strip()) < 20:
+        st.info("먼저 전사본을 넣어 주세요.")
+        return
+    st.caption("이 서버 안에서만 처리합니다(외부 전송 없음). 자동 찾기는 띄어 쓴 이름·두 글자 이름·동네 이름 등을 놓칠 수 있으니 "
+               "결과를 꼭 확인하고, 빠진 것은 전사본 칸에서 직접 고치세요.")
+    left, right = st.columns([1, 1.4])
+    with left:
+        names = st.text_area(
+            "참여자 이름", key="mask_names", height=150, placeholder="김민수\n이수\n박지영=진행자",
+            help="한 줄에 한 명. 적은 순서대로 P1, P2…로 바뀝니다. '이름=바꿀 말'로 직접 정할 수 있습니다. '민수 씨'처럼 이름만 부른 것도 바뀝니다.",
+        )
+    with right:
+        auto = st.multiselect("자동으로 찾을 정보", list(mask.AUTO_TYPES), default=mask.DEFAULT_AUTO, key="mask_auto")
+        if st.button("🔍 찾아보기", use_container_width=True):
+            det = None
+            if auto:
+                try:
+                    det = pii_detector()
+                except Exception as e:
+                    st.warning(f"자동 찾기를 쓸 수 없어 이름 목록만 적용합니다. ({type(e).__name__})")
+            with st.spinner("찾는 중…"):
+                spans, rows = mask.find(text, mask.parse_names(names), auto, det)
+            st.session_state.mask_found = {"text": text, "spans": spans, "rows": rows}
+    found = st.session_state.get("mask_found")
+    if not found or found["text"] != text:
+        return
+    if not found["rows"]:
+        st.info("바꿀 곳을 찾지 못했습니다.")
+        return
+    st.caption(f"{len(found['rows'])}가지 · {sum(r['횟수'] for r in found['rows'])}곳 — 체크를 풀면 그대로 두고, '바꿀 말'은 고칠 수 있습니다.")
+    edited = st.data_editor(
+        found["rows"], key="mask_editor", hide_index=True, use_container_width=True, height=min(300, 38 + 35 * len(found["rows"])),
+        column_order=["가리기", "원래", "바꿀 말", "종류", "횟수", "예시"],
+        disabled=["원래", "종류", "횟수", "예시"],
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("가리고 1단계 분석 시작", type="primary", use_container_width=True):
+        send_transcript(mask.apply(text, found["spans"], edited), "run")
+    if c2.button("가리기만 하기", use_container_width=True):
+        send_transcript(mask.apply(text, found["spans"], edited))
+
+# 대화 상자에서 넘어온 전사본은 칸을 그리기 전에 넣는다. 바로 분석이면 이전 결과를 지운다
+if "pending_transcript" in st.session_state:
+    st.session_state.transcript = st.session_state.pop("pending_transcript")
+    if st.session_state.get("autorun"):
+        for s in STAGE_KEYS:
+            st.session_state[s] = None
+
 # ── 진행 단계 표시 ──
 done = sum(1 for s in STAGE_KEYS if st.session_state[s])
 steps = "".join(
@@ -158,14 +255,21 @@ with st.container(border=True):
         msg = st.session_state.get("upload_msg")
         if msg:
             (st.caption if msg[0] == "ok" else st.error)(msg[1])
-        st.caption("참여자명은 P1, P2 등으로 익명화해주세요.")
+        if st.button("🎙️ 음성 파일 → 글", use_container_width=True, help="녹음 파일을 이 서버에서 글로 바꿔 전사본에 넣습니다"):
+            stt_dialog()
+        if st.button("🕶️ 개인정보 가리기", use_container_width=True, help="참여자 이름을 P1, P2…로, 전화·주소 등을 [전화번호]처럼 바꿉니다"):
+            mask_dialog()
+        st.caption("AI로 보내기 전에 이름 등 개인정보를 꼭 가려 주세요.")
     with text_col:
         transcript = st.text_area("전사본", key="transcript", height=230, placeholder="여기에 전사본을 붙여넣거나 왼쪽에서 파일을 올리세요...", label_visibility="collapsed")
-        if transcript and len(transcript.strip()) >= 20:
+        ready = bool(transcript) and len(transcript.strip()) >= 20
+        if ready:
             st.caption(f"✅ {len(transcript.strip()):,}자")
+        else:
+            st.caption("붙여 넣은 뒤에는 칸 밖을 한 번 누르거나 Ctrl+Enter 를 누르면 반영됩니다.")
 
-if not transcript or len(transcript.strip()) < 20:
-    st.stop()
+if st.session_state.pop("open_mask", False):
+    mask_dialog()
 
 def build_prompt(i):
     if i == 0:
@@ -191,12 +295,16 @@ for i, (key, title) in enumerate(zip(STAGE_KEYS, STAGE_TITLES)):
         with btn_col:
             if result is None:
                 clicked = st.button("▶ 분석 시작", key=f"run_{key}", type="primary", use_container_width=True)
+                if i == 0 and st.session_state.pop("autorun", False):
+                    clicked = True
             elif st.button("🔄 다시", key=f"redo_{key}", use_container_width=True):
                 for s in STAGE_KEYS[i:]:
                     st.session_state[s] = None
                 st.rerun()
         if result is None:
-            if clicked:
+            if clicked and not ready:
+                st.warning("전사본을 20자 이상 넣어 주세요.")
+            elif clicked:
                 try:
                     with st.spinner(f"{i + 1}단계 분석 중..."):
                         out = st.write_stream(run(build_prompt(i)))

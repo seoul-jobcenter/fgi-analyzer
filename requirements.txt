@@ -1,3 +1,10 @@
 anthropic>=0.40.0
 streamlit>=1.31.0
 google-genai>=1.0.0
+# 개인정보 가리기(pii-cleaner 엔진, 코드·모델은 /srv/projects/pii-cleaner/repo) — CPU 판 torch
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+transformers==5.15.0
+schift-ko-pii==0.6.0
+safetensors>=0.5,<1
+huggingface-hub>=1.5,<2
