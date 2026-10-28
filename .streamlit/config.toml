@@ -1,0 +1,4 @@
+[server]
+# https://scv.job.or.kr/fgi/ (nginx 가 /fgi/ 를 그대로 넘긴다)
+baseUrlPath = "fgi"
+maxUploadSize = 20
