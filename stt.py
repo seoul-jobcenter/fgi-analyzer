@@ -20,6 +20,14 @@ def clock(sec):
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60}:{sec % 60:02d}"
 
 
+def _open_lock():
+    # 읽기로만 연다. /tmp 에서는 남이 만든 파일을 '없으면 만들기'로 열 수 없어 있으면 그냥 연다
+    try:
+        return os.open(LOCK_FILE, os.O_RDONLY)
+    except FileNotFoundError:
+        return os.open(LOCK_FILE, os.O_RDONLY | os.O_CREAT, 0o644)
+
+
 def transcribe(filename, data, on_progress=lambda ratio, msg: None):
     """(글자, 녹음 길이 초)를 돌려준다."""
     with tempfile.TemporaryDirectory(prefix="fgi-stt-") as tmp:
@@ -38,8 +46,7 @@ def transcribe(filename, data, on_progress=lambda ratio, msg: None):
         os.remove(src)
         duration = max((os.path.getsize(wav) - 44) / 32000, 1)  # 16kHz·16bit·모노 = 초당 32000바이트
 
-        # 잠금 파일은 읽기로만 연다(다른 계정이 먼저 만들었어도 열리도록)
-        with os.fdopen(os.open(LOCK_FILE, os.O_RDONLY | os.O_CREAT, 0o644)) as lock:
+        with os.fdopen(_open_lock()) as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
