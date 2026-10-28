@@ -18,18 +18,37 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-if not api_key:
-    try:
-        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
-    except Exception:
-        api_key = ""
-if not api_key:
-    api_key = st.session_state.get("api_key_input", "")
+# AI 선택지: 이름 → (키 환경변수, 모델, 키 예시)
+PROVIDERS = {
+    "Claude": ("ANTHROPIC_API_KEY", os.environ.get("CLAUDE_MODEL", "claude-opus-4-8"), "sk-ant-..."),
+    "Gemini": ("GEMINI_API_KEY", os.environ.get("GEMINI_MODEL", "gemini-4-argon"), "AIza..."),
+}
+
+def load_key(env_name):
+    key = os.environ.get(env_name, "")
+    if not key:
+        try:
+            key = st.secrets.get(env_name, "")
+        except Exception:
+            key = ""
+    return key or st.session_state.get(f"key_saved_{env_name}", "")
+
+def save_key(env_name):
+    # 입력칸이 사라지면 위젯 값도 지워지므로 따로 보관한다
+    st.session_state[f"key_saved_{env_name}"] = st.session_state.get(f"key_input_{env_name}", "")
 
 for s in ["stage1","stage2","stage3","stage4","stage5"]:
     if s not in st.session_state:
         st.session_state[s] = None
+    if f"{s}_model" not in st.session_state:
+        st.session_state[f"{s}_model"] = None
+
+if "provider" not in st.session_state:
+    st.session_state.provider = os.environ.get("DEFAULT_PROVIDER", "Claude")
+provider = st.session_state.provider
+key_env, model_name, key_hint = PROVIDERS[provider]
+api_key = load_key(key_env)
+model_label = f"{provider} ({model_name})"
 
 head_left, head_right = st.columns([2.8, 1], vertical_alignment="center")
 with head_left:
@@ -45,9 +64,9 @@ with head_right:
     status_col, reset_col = st.columns([1, 1.2], vertical_alignment="center")
     with status_col:
         if api_key:
-            st.markdown('<div class="fgi-status fgi-on">✅ API 연결됨</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="fgi-status fgi-on">✅ {provider} 연결됨</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="fgi-status fgi-off">⚠️ API 미연결</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="fgi-status fgi-off">⚠️ {provider} 미연결</div>', unsafe_allow_html=True)
     with reset_col:
         if st.button("🔄 처음부터 다시 시작", use_container_width=True):
             for k in list(st.session_state.keys()):
@@ -56,16 +75,33 @@ with head_right:
 
 st.divider()
 
+st.radio(
+    "🤖 분석에 쓸 AI",
+    list(PROVIDERS),
+    format_func=lambda p: f"{p} · {PROVIDERS[p][1]}",
+    key="provider",
+    horizontal=True,
+    help="단계마다 바꿀 수 있습니다. 결과에는 단계별로 어느 AI가 분석했는지 표시됩니다.",
+)
+if provider == "Gemini":
+    st.caption("Gemini API 는 결제가 연결된 유료 등급 키에서만 입력·응답을 Google 제품 개선에 쓰지 않습니다(무료 등급은 개선에 쓰고 사람이 검토할 수 있음). 전사본은 꼭 익명화해 주세요.")
+
 if not api_key:
-    st.text_input("🔑 Claude API 키", type="password", placeholder="sk-ant-...", key="api_key_input")
-    st.info("Claude API 키를 입력하면 분석을 시작할 수 있습니다.")
+    st.text_input(f"🔑 {provider} API 키", type="password", placeholder=key_hint, key=f"key_input_{key_env}", on_change=save_key, args=(key_env,))
+    st.info(f"{provider} API 키를 입력하면 분석을 시작할 수 있습니다.")
     st.stop()
 
-client = anthropic.Anthropic(api_key=api_key)
-
 def run(prompt):
+    if provider == "Gemini":
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        for chunk in client.models.generate_content_stream(model=model_name, contents=prompt):
+            if chunk.text:
+                yield chunk.text
+        return
+    client = anthropic.Anthropic(api_key=api_key)
     with client.messages.stream(
-        model="claude-opus-4-8",
+        model=model_name,
         max_tokens=8192,
         messages=[{"role": "user", "content": prompt}]
     ) as stream:
@@ -90,8 +126,10 @@ if st.session_state.stage1 is None:
         with st.spinner("1단계 분석 중..."):
             result = st.write_stream(run(p))
         st.session_state.stage1 = result
+        st.session_state.stage1_model = model_label
         st.rerun()
 else:
+    st.caption(f"분석: {st.session_state.stage1_model}")
     st.markdown(st.session_state.stage1)
     if st.button("🔄 1단계 다시"):
         for s in ["stage1","stage2","stage3","stage4","stage5"]:
@@ -107,8 +145,10 @@ if st.session_state.stage1:
             with st.spinner("2단계 분석 중..."):
                 result = st.write_stream(run(p))
             st.session_state.stage2 = result
+            st.session_state.stage2_model = model_label
             st.rerun()
     else:
+        st.caption(f"분석: {st.session_state.stage2_model}")
         st.markdown(st.session_state.stage2)
         if st.button("🔄 2단계 다시"):
             for s in ["stage2","stage3","stage4","stage5"]:
@@ -124,8 +164,10 @@ if st.session_state.stage2:
             with st.spinner("3단계 분석 중..."):
                 result = st.write_stream(run(p))
             st.session_state.stage3 = result
+            st.session_state.stage3_model = model_label
             st.rerun()
     else:
+        st.caption(f"분석: {st.session_state.stage3_model}")
         st.markdown(st.session_state.stage3)
         if st.button("🔄 3단계 다시"):
             for s in ["stage3","stage4","stage5"]:
@@ -141,8 +183,10 @@ if st.session_state.stage3:
             with st.spinner("4단계 분석 중..."):
                 result = st.write_stream(run(p))
             st.session_state.stage4 = result
+            st.session_state.stage4_model = model_label
             st.rerun()
     else:
+        st.caption(f"분석: {st.session_state.stage4_model}")
         st.markdown(st.session_state.stage4)
         if st.button("🔄 4단계 다시"):
             for s in ["stage4","stage5"]:
@@ -158,8 +202,10 @@ if st.session_state.stage4:
             with st.spinner("5단계 분석 중..."):
                 result = st.write_stream(run(p))
             st.session_state.stage5 = result
+            st.session_state.stage5_model = model_label
             st.rerun()
     else:
+        st.caption(f"분석: {st.session_state.stage5_model}")
         st.markdown(st.session_state.stage5)
         if st.button("🔄 5단계 다시"):
             st.session_state.stage5 = None
@@ -171,5 +217,5 @@ if st.session_state.stage5:
     out = "# FGI 분석 결과\n\n"
     for k,n in [("stage1","1단계"),("stage2","2단계"),("stage3","3단계"),("stage4","4단계"),("stage5","5단계")]:
         if st.session_state.get(k):
-            out += f"## {n}\n\n{st.session_state[k]}\n\n---\n\n"
+            out += f"## {n}\n\n_분석: {st.session_state.get(k + '_model')}_\n\n{st.session_state[k]}\n\n---\n\n"
     st.download_button("📥 전체 결과 다운로드", data=out.encode("utf-8"), file_name=f"FGI결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md", mime="text/markdown", use_container_width=True, type="primary")
